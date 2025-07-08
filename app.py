@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, render_template_string, request
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 import uuid
