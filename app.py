@@ -6,10 +6,20 @@ import socket
 import os
 from datetime import datetime
 
+# Create an instance of the Flask app
 app = Flask(__name__)
 
-# Ensure the 'data' folder exists to store uploaded files
+# Initialize the S3 client using IAM role credentials
+s3_client = boto3.client(
+    's3',
+    region_name=os.getenv('AWS_REGION', 'us-east-2')  # Default to 'us-east-2' if not provided in the environment
+)
+
+# Ensure the 'data' folder exists to store uploaded files locally
 os.makedirs('data', exist_ok=True)
+
+# S3 bucket name (make sure it's set correctly)
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', 'my-pythonapp-bucket')  # Get bucket name from environment variable or default
 
 @app.route('/')
 def home():
