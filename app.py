@@ -5,11 +5,11 @@ import uuid
 import socket
 import os
 from datetime import datetime
-from careers import careers_blueprint
 
 app = Flask(__name__)
 
-app.register_blueprint(careers_blueprint, url_prefix='/careers')
+# Ensure the 'data' folder exists to store uploaded files
+os.makedirs('data', exist_ok=True)
 
 @app.route('/')
 def home():
@@ -83,7 +83,7 @@ def home():
 <body>
 
     <!-- Careers Link -->
-    <a href="{{ url_for('careers.careers') }}" class="nav-link">Careers</a>
+    <a href="{{ url_for('careers') }}" class="nav-link">Careers</a>
 
     <h1>Welcome to Polypop Nigeria Limited!</h1>
     <p>We specialize in providing innovative solutions to make your business thrive. Explore our services below:</p>
@@ -117,9 +117,9 @@ def home():
 </body>
 </html>
 '''
-    return render_template('home.html', current_date=current_date, system_id=system_id, private_ip=private_ip)
+    return render_template_string(html_content, current_date=current_date, system_id=system_id, private_ip=private_ip)
 
-app.route('/careers', methods=['GET', 'POST'])
+@app.route('/careers', methods=['GET', 'POST'])
 def careers():
     if request.method == 'POST':
         # Get the user inputs from the form
