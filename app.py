@@ -119,7 +119,7 @@ def home():
 '''
     return render_template('home.html', current_date=current_date, system_id=system_id, private_ip=private_ip)
 
-@app.route('/careers', methods=['GET', 'POST'])
+app.route('/careers', methods=['GET', 'POST'])
 def careers():
     if request.method == 'POST':
         # Get the user inputs from the form
@@ -156,8 +156,8 @@ def careers():
         except Exception as e:
             return f"An error occurred: {str(e)}", 500
 
-      # For GET requests, show the careers page
-      careers_html = '''
+    # For GET requests, show the careers page
+    careers_html = '''
 <!DOCTYPE html>
 <html lang="en">
 <head>
