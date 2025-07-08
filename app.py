@@ -9,8 +9,6 @@ from careers import careers_blueprint
 
 app = Flask(__name__)
 
-# Ensure the 'data' folder exists to store uploaded files
-os.makedirs('data', exist_ok=True)
 app.register_blueprint(careers_blueprint, url_prefix='/careers')
 
 @app.route('/')
