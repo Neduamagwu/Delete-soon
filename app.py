@@ -4,7 +4,11 @@ from botocore.exceptions import NoCredentialsError, ClientError
 import uuid
 import socket
 import os
+import json
 from datetime import datetime
+import psycopg2
+from psycopg2 import sql
+
 
 # Create an instance of the Flask app
 app = Flask(__name__)
@@ -20,6 +24,75 @@ os.makedirs('data', exist_ok=True)
 
 # S3 bucket name (make sure it's set correctly)
 S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', 'my-pythonapp-bucket')  # Get bucket name from environment variable or default
+
+# Initialize RDS connection (using IAM Role for credentials)
+rds_host = os.getenv('RDS_HOST')  # RDS endpoint URL
+rds_db_name = 'polypop'
+rds_user = os.getenv('RDS_USER')  # Postgres username
+rds_port = '5432'  # Default PostgreSQL port
+secret_name = os.getenv('SECRET_NAME') # Secret to Read postgres password from
+
+# Initialize Secrets Manager client
+secrets_client = boto3.client('secretsmanager', region_name=os.getenv('AWS_REGION'))
+
+# Function to get RDS password from Secrets Manager
+def get_rds_password():
+    try:
+        get_secret_value_response = secrets_client.get_secret_value(SecretId=secret_name)
+        secret = get_secret_value_response['SecretString']
+        secret_dict = json.loads(secret)
+        return secret_dict['password']
+    except ClientError as e:
+        print(f"Error retrieving secret from Secrets Manager: {e}")
+        return None
+
+# Get the RDS password from Secrets Manager
+rds_password = get_rds_password()
+
+if not rds_password:
+    raise Exception("Unable to retrieve RDS password from Secrets Manager.")
+
+# Establish connection with the retrieved RDS password
+conn = psycopg2.connect(
+    host=rds_host,
+    database=rds_db_name,
+    user=rds_user,
+    password=rds_password,
+    port=rds_port,
+    sslmode='require'  # SSL is recommended for RDS connections
+)
+
+# Create the table if it doesn't exist and add new columns if they don't exist
+cursor = conn.cursor()
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS careers (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255),
+        experience INT,
+        position VARCHAR(255),
+        salary INT,
+        resume_url VARCHAR(255),
+        phone_number VARCHAR(20),
+        expected_salary INT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+""")
+conn.commit()
+
+# Add new columns if they don't exist
+cursor.execute("""
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='careers' AND column_name='phone_number') THEN
+            ALTER TABLE careers ADD COLUMN phone_number VARCHAR(20);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='careers' AND column_name='expected_salary') THEN
+            ALTER TABLE careers ADD COLUMN expected_salary INT;
+        END IF;
+    END $$;
+""")
+conn.commit()
+
 
 @app.route('/')
 def home():
@@ -87,6 +160,10 @@ def home():
             left: 20px;
             font-size: 16px;
             color: #4CAF50;
+            text-decoration: none;
+        }
+        .nav-link:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
@@ -132,38 +209,62 @@ def home():
 @app.route('/careers', methods=['GET', 'POST'])
 def careers():
     if request.method == 'POST':
-        # Get the user inputs from the form
-        user_name = request.form.get('name')
-
-        # Handle file upload
-        if 'file' not in request.files:
-            return "No file part", 400
-
-        file = request.files['file']
-
-        if file.filename == '':
-            return "No selected file", 400
-
-        # Extract file extension and create the file name
-        file_extension = os.path.splitext(file.filename)[1]  # Get the file extension
-        file_name = f"{user_name}{file_extension}"  # Combine user name with the file extension
-
-        # Get the current date in ddmmyyyy format
-        current_date = datetime.now().strftime('%d%m%Y')
-
-        # Create the S3 folder path based on the current date
-        s3_folder = f"{current_date}/{file_name}"
-
         try:
+            # Get all form data
+            user_name = request.form.get('name')
+            phone_number = request.form.get('phone')
+            experience = request.form.get('experience')
+            position = request.form.get('position')
+            salary = request.form.get('salary')
+            expected_salary = request.form.get('expected_salary')
+
+            # Handle file upload
+            if 'file' not in request.files:
+                return "No file part", 400
+
+            file = request.files['file']
+
+            if file.filename == '':
+                return "No selected file", 400
+
+            # Extract file extension and create the file name
+            file_extension = os.path.splitext(file.filename)[1]  # Get the file extension
+            file_name = f"{user_name.replace(' ', '_')}{file_extension}"  # Combine user name with the file extension
+
+            # Get the current date in ddmmyyyy format
+            current_date = datetime.now().strftime('%d%m%Y')
+
+            # Create the S3 folder path based on the current date
+            s3_folder = f"{current_date}/{file_name}"
+
             # Upload file to S3 within the folder structure
             s3_client.upload_fileobj(file, S3_BUCKET_NAME, s3_folder)
+            resume_url = f"s3://{S3_BUCKET_NAME}/{s3_folder}"
+
+            # Insert into database
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO careers (name, experience, position, salary, resume_url, phone_number, expected_salary)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                user_name,
+                int(experience) if experience else None,
+                position,
+                int(salary) if salary else None,
+                resume_url,
+                phone_number,
+                int(expected_salary) if expected_salary else None
+            ))
+            conn.commit()
 
             # Return success message
-            return f"File '{file_name}' uploaded successfully to S3 folder '{current_date}'"
+            return f"Application submitted successfully! Resume '{file_name}' uploaded to S3 folder '{current_date}' and saved to database."
 
         except NoCredentialsError:
+            conn.rollback()
             return "Credentials not available", 400
         except Exception as e:
+            conn.rollback()
             return f"An error occurred: {str(e)}", 500
 
     # For GET requests, show the careers page
@@ -212,7 +313,7 @@ def careers():
             font-weight: bold;
             margin-bottom: 8px;
             color: #333;
-            text-align: center;
+            text-align: left;
         }
         .form-group input {
             width: 100%;
@@ -228,6 +329,13 @@ def careers():
         .form-group input[type="file"] {
             border: none;
             padding: 10px 0;
+        }
+        .section-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4CAF50;
+            margin: 30px 0 20px;
+            text-align: center;
         }
         button {
             background-color: #4CAF50;
@@ -265,14 +373,43 @@ def careers():
         <p>We are always looking for talented individuals to join our team! Please fill in your details and upload your resume below:</p>
 
         <form method="POST" enctype="multipart/form-data" class="upload-form">
+            <!-- Personal Information -->
             <div class="form-group">
                 <label for="name">Your Name</label>
                 <input type="text" name="name" id="name" required>
             </div>
+            
+            <div class="form-group">
+                <label for="phone">Phone Number:</label>
+                <input type="tel" name="phone" id="phone" required placeholder="Enter your phone number">
+            </div>
+
+            <!-- Professional Information Section -->
+            <div class="section-title">Professional Information</div>
+            
+            <div class="form-group">
+                <label for="experience">Years of Experience:</label>
+                <input type="number" name="experience" id="experience" required min="0" max="50">
+            </div>
+
+            <div class="form-group">
+                <label for="position">Position Applying For:</label>
+                <input type="text" name="position" id="position" required placeholder="e.g. Software Developer, Cloud Engineer">
+            </div>
+
+            <div class="form-group">
+                <label for="salary">Current Salary (Naira):</label>
+                <input type="number" name="salary" id="salary" placeholder="Enter your current salary (optional)">
+            </div>
+
+            <div class="form-group">
+                <label for="expected_salary">Expected Salary (Naira):</label>
+                <input type="number" name="expected_salary" id="expected_salary" placeholder="Enter your expected salary (optional)">
+            </div>
 
             <div class="form-group">
                 <label for="file">Upload Your Resume</label>
-                <input type="file" name="file" id="file" required>
+                <input type="file" name="file" id="file" required accept=".pdf,.doc,.docx">
             </div>
 
             <button type="submit">Submit Application</button>
