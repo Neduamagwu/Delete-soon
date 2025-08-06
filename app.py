@@ -103,7 +103,6 @@ def send_sns_notification(user_name, user_position, resume_url, user_experience,
     
     # Construct the SNS message body
     sns_message_body = f"A new profile has been uploaded. You can view the profile at: {resume_url}\n\nDetails:\n" \
-        f"Applicant Details:\n" \
         f"Name: {user_name}\n" \
         f"Position Applied: {user_position}\n" \
         f"Experience: {user_experience} years\n" \
