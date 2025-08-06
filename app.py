@@ -4,7 +4,7 @@ from botocore.exceptions import NoCredentialsError, ClientError
 import uuid
 import socket
 import os
-import json
+import json  # Added missing import
 from datetime import datetime
 import psycopg2
 from psycopg2 import sql
@@ -18,6 +18,19 @@ s3_client = boto3.client(
     's3',
     region_name=os.getenv('AWS_REGION', 'us-east-2')  # Default to 'us-east-2' if not provided in the environment
 )
+
+# Initialize the SNS client
+sns_client = boto3.client(
+    'sns',
+    region_name=os.getenv('AWS_REGION', 'us-east-2')  # Use same region as S3
+)
+
+# SNS Topic ARN (replace with your actual SNS Topic ARN)
+SNS_TOPIC_ARN = os.getenv('SNS_TOPIC_ARN')
+
+# Check if SNS_TOPIC_ARN is set (optional, won't break app if not set)
+if not SNS_TOPIC_ARN:
+    print("Warning: SNS_TOPIC_ARN is not set. SNS notifications will be disabled.")
 
 # Ensure the 'data' folder exists to store uploaded files locally
 os.makedirs('data', exist_ok=True)
@@ -78,6 +91,46 @@ cursor.execute("""
     )
 """)
 conn.commit()
+
+
+def send_sns_notification(user_name, user_position, resume_url, user_experience, user_salary, user_expected_salary, user_phone_number):
+    """
+    Sends a notification to an SNS Topic with the provided user details.
+    """
+    if not SNS_TOPIC_ARN:
+        print("SNS_TOPIC_ARN not configured. Skipping notification.")
+        return False
+    
+    # Construct the SNS message body
+    sns_message_body = f"A new job application has been submitted!\n\n" \
+        f"Applicant Details:\n" \
+        f"Name: {user_name}\n" \
+        f"Position Applied: {user_position}\n" \
+        f"Experience: {user_experience} years\n" \
+        f"Current Salary: ₦{user_salary:,} (if provided)\n" \
+        f"Expected Salary: ₦{user_expected_salary:,} (if provided)\n" \
+        f"Phone Number: {user_phone_number}\n\n" \
+        f"Resume Location: {resume_url}\n\n" \
+        f"Please review the application in your admin panel."
+    
+    # Construct the SNS message subject
+    sns_subject = f"New Application: {user_name} for {user_position}"
+    
+    try:
+        # Publish the message to SNS
+        sns_client.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Message=sns_message_body,
+            Subject=sns_subject
+        )
+        print(f"SNS notification sent successfully for {user_name} applying for {user_position}")
+        return True
+    except NoCredentialsError:
+        print("No AWS credentials found. Unable to send SNS notification.")
+        return False
+    except Exception as e:
+        print(f"An error occurred while sending SNS notification: {str(e)}")
+        return False
 
 # Add new columns if they don't exist
 cursor.execute("""
@@ -257,8 +310,20 @@ def careers():
             ))
             conn.commit()
 
-            # Return success message
-            return f"Application submitted successfully! Resume '{file_name}' uploaded to S3 folder '{current_date}' and saved to database."
+            # Send SNS notification
+            notification_sent = send_sns_notification(
+                user_name=user_name,
+                user_position=position,
+                resume_url=resume_url,
+                user_experience=int(experience) if experience else 0,
+                user_salary=int(salary) if salary else 0,
+                user_expected_salary=int(expected_salary) if expected_salary else 0,
+                user_phone_number=phone_number
+            )
+
+            # Return success message with notification status
+            notification_status = "Notification sent to HR team." if notification_sent else "Application saved (notification service unavailable)."
+            return f"Application submitted successfully! Resume '{file_name}' uploaded to S3 folder '{current_date}' and saved to database. {notification_status}"
 
         except NoCredentialsError:
             conn.rollback()
