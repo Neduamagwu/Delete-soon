@@ -102,7 +102,7 @@ def send_sns_notification(user_name, user_position, resume_url, user_experience,
         return False
     
     # Construct the SNS message body
-    sns_message_body = f"A new job application has been submitted!\n\n" \
+    sns_message_body = f"A new profile has been uploaded. You can view the profile at: {resume_url}\n\nDetails:\n" \
         f"Applicant Details:\n" \
         f"Name: {user_name}\n" \
         f"Position Applied: {user_position}\n" \
@@ -123,7 +123,7 @@ def send_sns_notification(user_name, user_position, resume_url, user_experience,
             Message=sns_message_body,
             Subject=sns_subject
         )
-        print(f"SNS notification sent successfully for {user_name} applying for {user_position}")
+        print(f"Notification sent successfully for {user_name} applying for {user_position}")
         return True
     except NoCredentialsError:
         print("No AWS credentials found. Unable to send SNS notification.")
@@ -322,8 +322,7 @@ def careers():
             )
 
             # Return success message with notification status
-            notification_status = "Notification sent to HR team." if notification_sent else "Application saved (notification service unavailable)."
-            return f"Application submitted successfully! Resume '{file_name}' uploaded to S3 folder '{current_date}' and saved to database. {notification_status}"
+            return f"File'{file_name}' uploaded successfully to S3 and your application has been submitted."
 
         except NoCredentialsError:
             conn.rollback()
